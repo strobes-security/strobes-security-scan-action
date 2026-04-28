@@ -8,16 +8,43 @@ commit / PR  ──▶  GitHub Actions  ──▶  signed webhook  ──▶  St
 
 ## Quick start
 
-### 1. Configure the Strobes side
+To integrate SAST scanning into your CI/CD pipeline, we use the Strobes **Automation** + **AI Workspace** features. Set up the Strobes side first, then drop the GitHub Action into your repo.
 
-Create a workflow in **Automation → Workflows** with:
+### 1. Set up the Strobes side
 
-- `hooks.on_inbound_webhook: true`
-- `triggers.workflow_mode: 3` _(Launch AI task)_
-- `triggers.launch_ai_task.initial_message`: your review prompt, e.g. _"perform secure code review on the commit code received and report any vulnerabilities identified immediately."_
-- `triggers.launch_ai_task.workspace_id` _(optional)_: a workspace with GitHub credentials if you want the agent to comment on PRs / open issues.
+#### a. Create the AI Workspace
 
-Save the workflow and copy the **webhook URL** and **HMAC secret**.
+The AI Workspace is the long-lived context that scan agents run inside. It holds the standing review instructions and the credentials the agent uses to clone your repo.
+
+1. Log in to Strobes and navigate to **AI → Workspaces**.
+2. Click **Blank workspace**.
+3. Provide a workspace description — this becomes the workspace's standing system prompt. For example:
+
+   > Set up a CI/CD pipeline integration where incoming PRs are scanned for potential vulnerabilities. Review the code changes carefully and use the credentials attached to this workspace to clone the repository locally and perform an in-depth review when needed to verify whether the vulnerabilities in the PR can affect the system, then report findings. This workspace is used to spin up new agent tasks to scan PRs as they arrive.
+
+4. Save. The workspace is now created.
+5. Open the workspace's **Settings** and attach the **GitHub credentials** the agent will use to clone and review the target repo.
+
+#### b. Create the Automation
+
+The Automation receives the inbound webhook from GitHub Actions and dispatches a scan task into the workspace you just created.
+
+1. Navigate to **Automation → New Automation → Create Manually**.
+2. **Select the asset** that represents your repository.
+3. Enable **Allow multiple actions to perform**.
+4. Choose **Webhook** as the trigger.
+5. Under **Filters**, select the asset you want this automation scoped to (the target asset created for your repo).
+6. Under **Actions**, select **Launch AI task**, then click into it and configure:
+   - **Workspace** — pick the workspace you just created from the dropdown.
+   - **Prompt** — the per-task instruction, for example:
+
+     > Scan the following incoming PR and report all security vulnerabilities identified immediately on the platform.
+
+7. Save the automation.
+
+#### c. Copy the webhook credentials
+
+Once the automation is saved, Strobes displays a **webhook URL** and an **HMAC secret**. Copy both — you'll wire them into the GitHub repo in the next steps. The webhook is what GitHub Actions hits on every push / PR; Strobes verifies the HMAC signature and triggers a fresh agent task in your workspace.
 
 ### 2. Add the secret to your repository
 
