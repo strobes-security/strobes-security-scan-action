@@ -74,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: strobes-security/strobes-sast-scan-action@v1
+      - uses: strobes-co/strobes-sast-scan-action@v1
         with:
           webhook-url: https://<strobes-host>/api/v1/webhooks/receive/<uuid>
           webhook-secret: ${{ secrets.STROBES_WEBHOOK_SECRET }}
