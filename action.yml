@@ -1,0 +1,97 @@
+name: 'Strobes Security Scan'
+description: 'Send commit or pull request diff to a Strobes AI workflow for automated security review.'
+author: '0xavis'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  webhook-url:
+    description: 'Strobes inbound webhook URL (https://<strobes-host>/api/v1/webhooks/receive/<uuid>)'
+    required: true
+  webhook-secret:
+    description: 'HMAC-SHA256 secret issued by your Strobes workflow'
+    required: true
+  fail-on-error:
+    description: 'Fail the job if Strobes returns a non-2xx response'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify checkout has full history
+      shell: bash
+      run: |
+        if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+          echo "::warning::Repository is a shallow clone. Use 'actions/checkout@v4' with 'fetch-depth: 0' for accurate diffs."
+        fi
+
+    - name: Build and send signed payload to Strobes
+      shell: bash
+      env:
+        STROBES_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        STROBES_WEBHOOK_SECRET: ${{ inputs.webhook-secret }}
+        FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        EVENT_NAME: ${{ github.event_name }}
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ github.ref_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+
+        if [[ "$EVENT_NAME" == "pull_request" || "$EVENT_NAME" == "pull_request_target" ]]; then
+          AFTER="$PR_HEAD_SHA"
+          BEFORE="$PR_BASE_SHA"
+          EVENT="pull_request"
+        else
+          AFTER=$(git rev-parse HEAD)
+          BEFORE=$(git rev-parse HEAD^ 2>/dev/null || echo "")
+          EVENT="push"
+        fi
+
+        if [[ -z "$BEFORE" ]]; then
+          git show --patch --no-color "$AFTER" > /tmp/diff.patch
+        else
+          git diff --patch --no-color "$BEFORE..$AFTER" > /tmp/diff.patch
+        fi
+
+        DIFF_BYTES=$(wc -c < /tmp/diff.patch | tr -d ' ')
+        echo "Diff size: ${DIFF_BYTES} bytes (${EVENT} event, ${BEFORE:-<root>}..${AFTER})"
+
+        if [[ "$EVENT" == "pull_request" ]]; then
+          jq -n --arg sha "$AFTER" --arg before "$BEFORE" \
+                --arg repo "$REPO" --arg branch "$BRANCH" \
+                --arg pr "$PR_NUMBER" \
+                --rawfile diff /tmp/diff.patch \
+                '{event:"pull_request", data:{repository:$repo, branch:$branch, commit:$sha, before:$before, pr_number:$pr, diff:$diff}}' \
+                > /tmp/payload.json
+        else
+          jq -n --arg sha "$AFTER" --arg before "$BEFORE" \
+                --arg repo "$REPO" --arg branch "$BRANCH" \
+                --rawfile diff /tmp/diff.patch \
+                '{event:"push", data:{repository:$repo, branch:$branch, commit:$sha, before:$before, diff:$diff}}' \
+                > /tmp/payload.json
+        fi
+
+        SIG=$(openssl dgst -sha256 -hmac "$STROBES_WEBHOOK_SECRET" /tmp/payload.json | awk '{print $NF}')
+
+        HTTP_CODE=$(curl -sS -o /tmp/response.txt -w "%{http_code}" -X POST "$STROBES_WEBHOOK_URL" \
+                    -H 'Content-Type: application/json' \
+                    -H "X-Strobes-Signature: sha256=$SIG" \
+                    --data-binary @/tmp/payload.json)
+
+        echo "Strobes responded with HTTP $HTTP_CODE"
+        echo "----- response body -----"
+        cat /tmp/response.txt || true
+        echo
+        echo "-------------------------"
+
+        if [[ "$HTTP_CODE" -ge 400 ]]; then
+          echo "::error::Strobes rejected the webhook (HTTP $HTTP_CODE)"
+          if [[ "$FAIL_ON_ERROR" == "true" ]]; then
+            exit 1
+          fi
+        fi
