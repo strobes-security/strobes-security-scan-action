@@ -36,9 +36,9 @@ The Automation receives the inbound webhook from GitHub Actions and dispatches a
 5. Under **Filters**, select the asset you want this automation scoped to (the target asset created for your repo).
 6. Under **Actions**, select **Launch AI task**, then click into it and configure:
    - **Workspace** — pick the workspace you just created from the dropdown.
-   - **Prompt** — the per-task instruction, for example:
+   - **Prompt** — the per-task instruction. Keep it tightly scoped to the PR diff so the agent doesn't waste tokens re-scanning unchanged code. For example:
 
-     > Scan the following incoming PR and report all security vulnerabilities identified immediately on the platform.
+     > Review **only** the code changes in this incoming PR / commit (the unified diff in the payload). Identify and report any security vulnerabilities introduced or exposed by these changes. Stay strictly within the PR scope — examine the changed files, and consult related files in the cloned repo only when needed to verify exploitability of a finding. Do **not** perform a full-repository scan; this is incremental, per-PR review, not a re-scan of unchanged code. For each finding, include severity, file path, line number, a concise impact statement, and a suggested fix. Submit findings immediately on the platform.
 
 7. Save the automation.
 
